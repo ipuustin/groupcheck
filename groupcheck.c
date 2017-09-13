@@ -161,20 +161,6 @@ bool check_allowed(sd_bus *bus, struct conf_data *conf_data,
 
     switch (subject->kind) {
     case SUBJECT_KIND_UNIX_PROCESS:
-
-#if 0
-        if (subject->data.p.pid == 0) {
-            /* We don't authenticate requests coming from root to protect
-             * against attacks where the process exec()s a binary that is
-             * setuid root after asking for permissions. This is not needed if
-             * the root doesn't belong to any special groups though. It's the
-             * responsibility of the system administrator to make sure that
-             * there aren't any other UIDs that have setuid() binaries and
-             * belong to administrator groups. */
-            goto end;
-        }
-#endif
-
         mask = _SD_BUS_CREDS_ALL;
         r = sd_bus_creds_new_from_pid(&creds, subject->data.p.pid, mask);
         if (r < 0)
