@@ -12,10 +12,13 @@
  * more details.
  */
 
+#define _GNU_SOURCE
+
 #pragma once
 
 #include <stdbool.h>
 #include <systemd/sd-bus.h>
+#include <search.h>
 
 #define LINE_BUF_SIZE 512
 #define MAX_NAME_SIZE 256
@@ -27,11 +30,13 @@ struct line_data {
     char *id;
     int n_groups;
     char *groups[MAX_GROUPS];
+    gid_t gids[MAX_GROUPS];
 };
 
 struct conf_data {
     struct line_data *lines;
     int n_lines;
+    struct hsearch_data line_map;
 };
 
 /* D-Bus message analysis */
@@ -72,6 +77,7 @@ int initialize_bus(sd_bus **bus, sd_bus_slot **slot, struct conf_data *data);
 /* Load a policy file. The resulting struct must be freed by the caller. */
 int load_file(struct conf_data *conf_data, const char *filename);
 int load_directory(struct conf_data *conf_data, const char *filename);
+int index_configuration(struct conf_data *conf_data);
 
 /* Exported for test programs. */
 int get_start_time(pid_t pid, uint64_t *start);

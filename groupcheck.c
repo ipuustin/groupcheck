@@ -12,6 +12,8 @@
  * more details.
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -30,6 +32,14 @@
 
 #define STAT_NAME_SIZE 32
 #define STAT_DATA_SIZE 256
+
+static int gid_compare(const void *a, const void *b)
+{
+    int *ai = (int *) a;
+    int *bi = (int *) b;
+
+    return *ai - *bi;
+}
 
 int get_start_time(pid_t pid, uint64_t *start)
 {
@@ -119,30 +129,33 @@ static int verify_start_time(struct subject *subject)
 bool check_allowed(sd_bus *bus, struct conf_data *conf_data,
         struct subject *subject, const char *action_id)
 {
-    char **groups = NULL;
-    int n_groups = 0;
+    int n_conf_groups = 0;
     int r, i;
     sd_bus_creds *creds = NULL;
     gid_t primary_gid;
     uint64_t mask = SD_BUS_CREDS_SUPPLEMENTARY_GIDS | SD_BUS_CREDS_AUGMENT
             | SD_BUS_CREDS_PID | SD_BUS_CREDS_GID | SD_BUS_CREDS_UID
             | SD_BUS_CREDS_EUID;
-    const gid_t *gids = NULL;
+    const gid_t *gids = NULL, *conf_gids = NULL;
     int n_gids = 0;
     uid_t ruid, euid;
+    ENTRY e, *res = NULL;
+    struct line_data *line;
 
     /* find first the corresponding group data from the policy */
 
-    for (i = 0; i < conf_data->n_lines; i++) {
-        if (strcmp(conf_data->lines[i].id, action_id) == 0) {
-            groups = conf_data->lines[i].groups;
-            n_groups = conf_data->lines[i].n_groups;
-            break;
-        }
-    }
+    e.key = (void *) action_id;
+    e.data = NULL;
 
-    if (!groups)
+    r = hsearch_r(e, FIND, &res, &conf_data->line_map);
+    if (r == 0)
         return false;
+
+    line = (struct line_data *) res->data;
+    if (line == NULL)
+        return false;
+    conf_gids = line->gids;
+    n_conf_groups = line->n_groups;
 
     /* check which groups the subject belongs to */
 
@@ -231,34 +244,28 @@ bool check_allowed(sd_bus *bus, struct conf_data *conf_data,
         break;
     }
 
-    if (gids) {
-        int i, j;
-        struct group *grp;
+    if (gids == NULL)
+        goto end;
 
-        /* match the groups */
+    /* match the groups */
 
-        for (i = 0; i < n_groups; i++) {
-            grp = getgrnam(groups[i]);
-            if (grp == NULL)
-                continue;
+    for (i = 0; i < n_gids; i++) {
+        gid_t *found = NULL;
+        found = (gid_t *) bsearch(&gids[i], conf_gids, n_conf_groups, sizeof(gid_t), gid_compare);
 
-            for (j = 0; j < n_gids; j++) {
+        if (!found)
+            continue;
 
-                if (gids[j] == primary_gid) {
-                    /* We only include supplementary gids in the check, not the
-                       primary gid. This is to make it more difficult for
-                       processes to exec a setgid binary to gain elevated
-                       group access. */
-                       continue;
-                }
-
-                if (gids[j] == grp->gr_gid) {
-                    sd_bus_creds_unref(creds);
-                    /* the subject belongs to one of the groups defined in policy */
-                    return true;
-                }
-            }
+        if (*found == primary_gid) {
+            /* We only include supplementary gids in the check, not the
+             * primary gid. This is to make it more difficult for
+             * processes to exec a setgid binary to gain elevated
+             * group access. */
+           continue;
         }
+
+        sd_bus_creds_unref(creds);
+        return true;
     }
 
 end:
@@ -886,4 +893,47 @@ int load_directory(struct conf_data *conf_data, const char *dirname)
 end:
     closedir(dir);
     return r;
+}
+
+int index_configuration(struct conf_data *conf_data)
+{
+    int size = 0, r, i, j;
+    ENTRY e, *ret;
+
+    if (conf_data->n_lines > (INT_MAX - conf_data->n_lines)) {
+        /* integer overflow */
+        return -1;
+    }
+
+    size = 2 * conf_data->n_lines;
+
+    r = hcreate_r(size, &conf_data->line_map);
+    if (r == 0)
+        return errno;
+
+    for (i = 0; i < conf_data->n_lines; i++) {
+        int n_groups = conf_data->lines[i].n_groups;
+        char **groups = conf_data->lines[i].groups;
+        gid_t *gids = conf_data->lines[i].gids;
+
+        for (j = 0; j < n_groups; j++) {
+            struct group *grp = getgrnam(groups[j]);
+            gids[j] = grp->gr_gid;
+        }
+
+        /* sort the array so we can later do quicker lookups */
+        qsort(gids, n_groups, sizeof(gid_t), gid_compare);
+
+        /* push the array to the table */
+
+        e.key = conf_data->lines[i].id;
+        e.data = (void *) &conf_data->lines[i];
+        r = hsearch_r(e, ENTER, &ret, &conf_data->line_map);
+        if (r == 0) {
+            /* TODO: free already allocated entries */
+            return errno;
+        }
+    }
+
+    return 0;
 }

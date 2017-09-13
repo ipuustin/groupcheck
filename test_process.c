@@ -12,6 +12,8 @@
  * more details.
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -62,6 +64,13 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error loading policy data.\n");
         goto end;
     }
+
+    r = index_configuration(&conf_data);
+    if (r < 0) {
+        fprintf(stderr, "Error indexing configuration.\n");
+        goto end;
+    }
+
     print_config(&conf_data);
 
     subject.kind = SUBJECT_KIND_UNIX_PROCESS;
@@ -76,6 +85,7 @@ int main(int argc, char *argv[])
     print_decision(&subject, action_id, allowed);
 
 end:
+    hdestroy_r(&conf_data.line_map);
     for (i = 0; i < conf_data.n_lines; i++) {
         for (j = 0; j < conf_data.lines[i].n_groups; j++) {
             free(conf_data.lines[i].groups[j]);

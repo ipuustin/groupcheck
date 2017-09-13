@@ -12,6 +12,8 @@
  * more details.
  */
 
+#define _GNU_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -91,6 +93,11 @@ int main(int argc, char *argv[])
             goto end;
         }
     }
+    r = index_configuration(&conf_data);
+    if (r < 0) {
+        fprintf(stderr, "Error indexing configuration.\n");
+        goto end;
+    }
 
     r = sd_event_default(&e);
     if (r < 0) {
@@ -123,6 +130,7 @@ end:
     if (e)
         sd_event_unref(e);
 
+    hdestroy_r(&conf_data.line_map);
     for (i = 0; i < conf_data.n_lines; i++) {
         for (j = 0; j < conf_data.lines[i].n_groups; j++) {
             free(conf_data.lines[i].groups[j]);
